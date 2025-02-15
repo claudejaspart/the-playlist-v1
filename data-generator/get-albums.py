@@ -8,7 +8,13 @@ import discogs_client
 from discogs_client.exceptions import HTTPError
 import psycopg2
 import random
+from urllib.parse import quote, unquote
 import os
+
+
+# cleanup
+os.system("rm -rf ./covers")
+os.system("rm -rf ./db_scripts")
 
 # utility functions
 def downloadCover(image_uri, album) :
@@ -17,8 +23,6 @@ def downloadCover(image_uri, album) :
     file.write(content)
     file.close()
 
-def random_between(a, b):  
-    return random.randint(a, b)
 
 # search variables
 shop_name = os.getenv('SHOP_NAME')
@@ -84,7 +88,7 @@ try:
     print("")
 
     print("Creating table SHOP")
-    query="CREATE TABLE shop(id SERIAL PRIMARY KEY,name VARCHAR(255),style VARCHAR(255));"
+    query="CREATE TABLE shop(id  serial PRIMARY KEY,name VARCHAR(255),style VARCHAR(255));"
     file.write("-- TABLE CREATE\n")
     file.write(query)
     file.write("\n")
@@ -92,16 +96,9 @@ try:
 
     # Creating ALBUMS 
     print("Creating table ALBUMS")
-    query="CREATE TABLE albums(id SERIAL PRIMARY KEY,title VARCHAR(255),year VARCHAR(4),artist_id INTEGER,labels VARCHAR(255),art VARCHAR(255),stock INTEGER,price INTEGER);"
+    query="CREATE TABLE albums(id SERIAL PRIMARY KEY,title VARCHAR(2048),year VARCHAR(4),artist VARCHAR(255),labels VARCHAR(255),art VARCHAR(255));"
     file.write(query)
     file.write("\n")
-    cursor.execute(query)
-
-    # Creating ARTISTS 
-    print("Creating table ARTISTS")
-    query="CREATE TABLE artists(id SERIAL PRIMARY KEY,name VARCHAR(255),style VARCHAR(255));"
-    file.write(query)
-    file.write("\n\n")
     cursor.execute(query)
 
     # Commiting changes
@@ -110,7 +107,7 @@ try:
     # adding shop name
     print("Adding shop data")
     query="insert into shop (name,style) "
-    query=query+"values ('{}','{}');".format(shop_name.replace("'", ""), music_style.replace("'", ""))
+    query=query+"values ('{}','{}');".format(quote(shop_name), quote(music_style))
 
     file.write("-- SHOP INFO INSERT\n")
     file.write(query)
@@ -135,30 +132,24 @@ try:
 
     # save results
     print("")
-    print("Inserting albums and artists in the DB")
+    print("Inserting albums in the DB")
     print("")
-    file.write("-- ALBUMS and ARTISTS insert\n")
+    file.write("-- ALBUMS insert\n")
 
     albums=1
     for release in search_results:
         # album data
         album_id=release.id
-        album_artist_id=int("".join(str(artist.id) for artist in release.artists))
-        album_title=release.title.replace("'", "")
-        if "live" in album_title.lower() :
-            continue
+        album_artist="".join(quote(artist.name) for artist in release.artists)
+        album_title=quote(release.title)
         album_year=release.year
-        album_labels="".join(label.name for label in release.labels).replace("'", "")
-        cover_filename="{}/{}.jpg".format(COVERS_DIR, album_title.strip().replace(" ", "_").replace("'", "").replace("/","").replace("\\",""))
+        album_labels=quote("".join(label.name for label in release.labels))
+        cover_filename="{}/{}.jpg".format(COVERS_DIR, quote(album_title[:15]))
         album_cover=downloadCover(release.images[0]["uri"], cover_filename)
 
-        # artist data
-        artist_name="".join(artist.name for artist in release.artists).replace("'", "")
-        artist_style=music_style
-
         # inserting albums in the db
-        query="insert into albums (id,title,artist_id,year,labels,art,stock,price) "
-        query=query+"values ({},'{}',{},'{}','{}','{}',{},{});".format(album_id, album_title, album_artist_id, album_year, album_labels, cover_filename , random_between(1,10), random_between(5,25))
+        query="insert into albums (title,artist,year,labels,art) "
+        query=query+"values ('{}','{}',{},'{}','{}');".format(album_title, album_artist, album_year, album_labels, cover_filename)
         # Exec query
         print("inserting album {}/{}".format(albums, total_albums))
         file.write(query)
@@ -166,28 +157,13 @@ try:
         cursor.execute(query)
         conn.commit()
 
-        # inserting artists in the db
-        # checking existence
-        query="select count(id) from artists where id={};".format(album_artist_id)
-        cursor.execute(query)
-        result=int(cursor.fetchall()[0][0])
-        if result == 0:
-            print("Inserting artist")
-            query="insert into artists (id,name,style) "
-            query=query+"values ({},'{}','{}');".format(album_artist_id, artist_name, music_style)
-            # Exec query
-            file.write(query)
-            file.write("\n")
-            cursor.execute(query)
-            conn.commit()
-        else:
-            print("Existing artist")
-        
         # checking for number of albums
         if albums >= total_albums:
             file.close()
             break
         albums=albums+1
 
-except (Exception, psycopg2.Error) as error:
-    print(error)
+except (psycopg2.Error) as error:
+    print("DB error : " , error)
+except (Exception) as error:
+    print("Error : " , error)
